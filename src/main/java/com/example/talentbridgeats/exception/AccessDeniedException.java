@@ -1,0 +1,7 @@
+package com.example.talentbridgeats.exception;
+
+public class AccessDeniedException extends RuntimeException {
+    public AccessDeniedException(String message) {
+        super(message);
+    }
+}
