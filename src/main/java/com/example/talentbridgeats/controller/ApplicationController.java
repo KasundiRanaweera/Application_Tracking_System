@@ -1,0 +1,117 @@
+package com.example.talentbridgeats.controller;
+
+import com.example.talentbridgeats.dto.*;
+import com.example.talentbridgeats.model.Application;
+import com.example.talentbridgeats.model.ApplicationStatus;
+import com.example.talentbridgeats.service.ApplicationService;
+import com.example.talentbridgeats.util.SecurityUtils;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/applications")
+@RequiredArgsConstructor
+public class ApplicationController {
+
+    private final ApplicationService applicationService;
+
+    // ==================== CANDIDATE ENDPOINTS ====================
+
+    // FR-U5 & FR-U6: Apply to a job
+    @PostMapping
+    public ResponseEntity<ApplicationSummaryResponseDto> applyToJob(@Valid @RequestBody ApplyRequestDto request) {
+        Long candidateId = SecurityUtils.getCurrentUserId();
+        ApplicationSummaryResponseDto application = applicationService.apply(request, candidateId);
+        return ResponseEntity.status(HttpStatus.CREATED).body(application);
+    }
+
+    // FR-U7: Get own applications
+    @GetMapping("/me")
+    public ResponseEntity<Page<ApplicationSummaryResponseDto>> getMyApplications(Pageable pageable) {
+        Long candidateId = SecurityUtils.getCurrentUserId();
+        Page<ApplicationSummaryResponseDto> applications = applicationService.getMyApplications(candidateId, pageable);
+        return ResponseEntity.ok(applications);
+    }
+
+    // FR-U7: Get single own application
+    @GetMapping("/me/{id}")
+    public ResponseEntity<ApplicationSummaryResponseDto> getMyApplication(@PathVariable Long id) {
+        Long candidateId = SecurityUtils.getCurrentUserId();
+        ApplicationSummaryResponseDto application = applicationService.getMyApplication(id, candidateId);
+        return ResponseEntity.ok(application);
+    }
+
+    // FR-U8: Withdraw own application
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> withdrawApplication(@PathVariable Long id) {
+        Long candidateId = SecurityUtils.getCurrentUserId();
+        applicationService.withdrawApplication(id, candidateId);
+        return ResponseEntity.noContent().build();
+    }
+
+    // ==================== RECRUITER ENDPOINTS ====================
+
+    // FR-R6: Get all applications for a job (with filtering/sorting)
+    @GetMapping("/job/{jobId}")
+    @PreAuthorize("hasRole('RECRUITER')")
+    public ResponseEntity<Page<ApplicationDetailResponseDto>> getJobApplications(
+            @PathVariable Long jobId,
+            @RequestParam(required = false) ApplicationStatus status,
+            Pageable pageable) {
+
+        Specification<Application> spec = null;
+
+        if (status != null) {
+            spec = (root, query, cb) -> cb.equal(root.get("status"), status);
+        }
+
+        Page<ApplicationDetailResponseDto> applications = applicationService.getApplicationsByJob(jobId, spec, pageable);
+        return ResponseEntity.ok(applications);
+    }
+
+    // FR-R7: Get single application detail
+    @GetMapping("/{id}")
+    @PreAuthorize("hasRole('RECRUITER')")
+    public ResponseEntity<ApplicationDetailResponseDto> getApplicationDetail(@PathVariable Long id) {
+        ApplicationDetailResponseDto application = applicationService.getApplicationDetail(id);
+        return ResponseEntity.ok(application);
+    }
+
+    // FR-R8: Rate application
+    @PatchMapping("/{id}/rating")
+    @PreAuthorize("hasRole('RECRUITER')")
+    public ResponseEntity<ApplicationDetailResponseDto> rateApplication(
+            @PathVariable Long id,
+            @Valid @RequestBody RatingRequestDto request) {
+        ApplicationDetailResponseDto application = applicationService.rateApplication(id, request);
+        return ResponseEntity.ok(application);
+    }
+
+    // FR-R9: Add note to application
+    @PostMapping("/{id}/notes")
+    @PreAuthorize("hasRole('RECRUITER')")
+    public ResponseEntity<NoteResponseDto> addNote(
+            @PathVariable Long id,
+            @Valid @RequestBody NoteRequestDto request) {
+        Long recruiterId = SecurityUtils.getCurrentUserId();
+        NoteResponseDto note = applicationService.addNote(id, request, recruiterId);
+        return ResponseEntity.status(HttpStatus.CREATED).body(note);
+    }
+
+    // FR-R10: Change application status
+    @PatchMapping("/{id}/status")
+    @PreAuthorize("hasRole('RECRUITER')")
+    public ResponseEntity<ApplicationDetailResponseDto> changeStatus(
+            @PathVariable Long id,
+            @Valid @RequestBody StatusChangeRequestDto request) {
+        ApplicationDetailResponseDto application = applicationService.changeApplicationStatus(id, request);
+        return ResponseEntity.ok(application);
+    }
+}
