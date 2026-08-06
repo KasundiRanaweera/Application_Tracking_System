@@ -5,10 +5,15 @@ import com.example.talentbridgeats.model.WorkMode;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.FutureOrPresent;
 import jakarta.validation.constraints.NotBlank;
+import lombok.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class JobCreateRequestDto {
     @NotBlank(message = "Title is required")
     private String title;
