@@ -4,11 +4,11 @@ import com.example.talentbridgeats.dto.JobCreateRequestDto;
 import com.example.talentbridgeats.dto.JobResponseDto;
 import com.example.talentbridgeats.dto.JobStatusChangeRequestDto;
 import com.example.talentbridgeats.dto.JobUpdateRequestDto;
-import com.example.talentbridgeats.dto.request.JobUpdateRequest;
-import com.example.talentbridgeats.dto.response.JobResponse;
+import com.example.talentbridgeats.exception.AccessDeniedException;
 import com.example.talentbridgeats.exception.ResourceNotFoundException;
 import com.example.talentbridgeats.model.Job;
 import com.example.talentbridgeats.model.JobStatus;
+import com.example.talentbridgeats.model.Role;
 import com.example.talentbridgeats.model.User;
 import com.example.talentbridgeats.repository.JobRepository;
 import com.example.talentbridgeats.repository.UserRepository;
@@ -29,6 +29,11 @@ public class JobService {
     public JobResponseDto createJob(JobCreateRequestDto request, Long recruiterId) {
         User recruiter = userRepository.findById(recruiterId)
                 .orElseThrow(() -> new ResourceNotFoundException("Recruiter not found"));
+
+        // Ensure the user is a recruiter
+        if (recruiter.getRole() != Role.RECRUITER) {
+            throw new AccessDeniedException("Only recruiters can create jobs");
+        }
 
         Job job = Job.builder()
                 .title(request.getTitle())
