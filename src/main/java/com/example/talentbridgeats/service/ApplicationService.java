@@ -21,23 +21,20 @@ public class ApplicationService {
     private final ApplicationNoteRepository applicationNoteRepository;
     private final JobRepository jobRepository;
     private final UserRepository userRepository;
+    private final PipelineValidator pipelineValidator; // ← injected
 
     // Candidate: Apply to a job
     public ApplicationSummaryResponseDto apply(ApplyRequestDto request, Long candidateId) {
-        // Check job exists and is OPEN
         Job job = jobRepository.findOpenJobById(request.getJobId())
                 .orElseThrow(() -> new ResourceNotFoundException("Job not found or not open"));
 
-        // Check candidate exists
         User candidate = userRepository.findById(candidateId)
                 .orElseThrow(() -> new ResourceNotFoundException("Candidate not found"));
 
-        // Check for duplicate application (FR-U6)
         if (applicationRepository.existsByJobIdAndCandidateId(job.getId(), candidateId)) {
             throw new DuplicateApplicationException("You have already applied to this job");
         }
 
-        // Create application
         Application application = Application.builder()
                 .job(job)
                 .candidate(candidate)
@@ -66,24 +63,20 @@ public class ApplicationService {
         return mapToSummaryResponse(application);
     }
 
-    // Candidate: Withdraw application (owner check)
+    // Candidate: Withdraw — goes through PipelineValidator with Role.USER
     public void withdrawApplication(Long applicationId, Long candidateId) {
         Application application = applicationRepository
                 .findByIdAndCandidateId(applicationId, candidateId)
                 .orElseThrow(() -> new ResourceNotFoundException("Application not found"));
 
-        // Check if already in a terminal state
-        if (application.getStatus() == ApplicationStatus.WITHDRAWN ||
-                application.getStatus() == ApplicationStatus.REJECTED ||
-                application.getStatus() == ApplicationStatus.HIRED) {
-            throw new IllegalStateException("Cannot withdraw application in " + application.getStatus() + " status");
-        }
+        // Validate: WITHDRAWN is only allowed by USER role
+        pipelineValidator.validate(application.getStatus(), ApplicationStatus.WITHDRAWN, Role.USER);
 
         application.setStatus(ApplicationStatus.WITHDRAWN);
         applicationRepository.save(application);
     }
 
-    // Recruiter: Get all applications for a job (with filtering/sorting)
+    // Recruiter: Get all applications for a job
     public Page<ApplicationDetailResponseDto> getApplicationsByJob(Long jobId, Specification<Application> spec, Pageable pageable) {
         Specification<Application> byJob = (root, query, cb) ->
                 cb.equal(root.get("job").get("id"), jobId);
@@ -110,7 +103,7 @@ public class ApplicationService {
         return mapToDetailResponse(updated);
     }
 
-    // Recruiter: Add note to application
+    // Recruiter: Add note
     public NoteResponseDto addNote(Long applicationId, NoteRequestDto request, Long recruiterId) {
         Application application = applicationRepository.findById(applicationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Application not found"));
@@ -128,50 +121,33 @@ public class ApplicationService {
         return mapNoteToResponse(saved);
     }
 
-    // Recruiter: Change application status (with validation)
+    // Recruiter: Change status — goes through PipelineValidator with Role.RECRUITER
     public ApplicationDetailResponseDto changeApplicationStatus(Long applicationId, StatusChangeRequestDto request) {
         Application application = applicationRepository.findById(applicationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Application not found"));
 
-        ApplicationStatus newStatus = request.getStatus();
-        ApplicationStatus currentStatus = application.getStatus();
+        // Validate: recruiter making the move
+        pipelineValidator.validate(application.getStatus(), request.getStatus(), Role.RECRUITER);
 
-        // Validate transition
-        if (!isValidStatusTransition(currentStatus, newStatus)) {
-            throw new IllegalStateException("Invalid status transition: " + currentStatus + " → " + newStatus);
-        }
-
-        application.setStatus(newStatus);
+        application.setStatus(request.getStatus());
         Application updated = applicationRepository.save(application);
         return mapToDetailResponse(updated);
     }
 
-    // Helper: Validate status transition
-    private boolean isValidStatusTransition(ApplicationStatus current, ApplicationStatus next) {
-        return switch (current) {
-            case APPLIED -> next == ApplicationStatus.UNDER_REVIEW || next == ApplicationStatus.REJECTED || next == ApplicationStatus.WITHDRAWN;
-            case UNDER_REVIEW -> next == ApplicationStatus.SHORTLISTED || next == ApplicationStatus.REJECTED || next == ApplicationStatus.WITHDRAWN;
-            case SHORTLISTED -> next == ApplicationStatus.INTERVIEW || next == ApplicationStatus.REJECTED || next == ApplicationStatus.WITHDRAWN;
-            case INTERVIEW -> next == ApplicationStatus.OFFER || next == ApplicationStatus.REJECTED || next == ApplicationStatus.WITHDRAWN;
-            case OFFER -> next == ApplicationStatus.HIRED || next == ApplicationStatus.REJECTED || next == ApplicationStatus.WITHDRAWN;
-            case HIRED, REJECTED, WITHDRAWN -> false; // No transitions from terminal states
-        };
-    }
-
-    // Helper: Map to summary response (candidate view - no rating/notes)
+    // Map to summary (candidate view — no rating, no notes)
     private ApplicationSummaryResponseDto mapToSummaryResponse(Application app) {
         return ApplicationSummaryResponseDto.builder()
                 .id(app.getId())
                 .jobId(app.getJob().getId())
                 .jobTitle(app.getJob().getTitle())
-                .companyName("TalentBridge") // single company
+                .companyName("TalentBridge")
                 .status(app.getStatus())
                 .appliedAt(app.getAppliedAt())
                 .updatedAt(app.getUpdatedAt())
                 .build();
     }
 
-    // Helper: Map to detail response (recruiter view - includes rating/notes)
+    // Map to detail (recruiter view — rating + notes included)
     private ApplicationDetailResponseDto mapToDetailResponse(Application app) {
         List<NoteResponseDto> notes = applicationNoteRepository.findByApplicationId(app.getId())
                 .stream()
@@ -195,7 +171,6 @@ public class ApplicationService {
                 .build();
     }
 
-    // Helper: Map note to response
     private NoteResponseDto mapNoteToResponse(ApplicationNote note) {
         return NoteResponseDto.builder()
                 .id(note.getId())
