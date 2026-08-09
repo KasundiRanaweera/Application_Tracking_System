@@ -26,7 +26,7 @@ public class JobController {
 
     private final JobService jobService;
 
-    // FR-U3: Candidates browse OPEN jobs
+    //Candidates browse OPEN jobs
     @GetMapping
     public ResponseEntity<Page<JobResponseDto>> listOpenJobs(
             @RequestParam(required = false) WorkMode workMode,
@@ -57,14 +57,14 @@ public class JobController {
         return ResponseEntity.ok(jobs);
     }
 
-    // FR-U4: Candidate view job detail
+    //Candidate view job detail
     @GetMapping("/{id}")
     public ResponseEntity<JobResponseDto> getOpenJobById(@PathVariable Long id) {
         JobResponseDto job = jobService.getOpenJobById(id);
         return ResponseEntity.ok(job);
     }
 
-    // FR-R2: Create job
+    //Create job
     @PostMapping
     @PreAuthorize("hasRole('RECRUITER')")
     public ResponseEntity<JobResponseDto> createJob(@Valid @RequestBody JobCreateRequestDto request) {
@@ -73,7 +73,7 @@ public class JobController {
         return ResponseEntity.status(HttpStatus.CREATED).body(job);
     }
 
-    // FR-R3: Update job
+    //Update job
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('RECRUITER')")
     public ResponseEntity<JobResponseDto> updateJob(
@@ -84,7 +84,7 @@ public class JobController {
         return ResponseEntity.ok(job);
     }
 
-    // FR-R3: Delete job
+    //Delete job
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('RECRUITER')")
     public ResponseEntity<Void> deleteJob(@PathVariable Long id) {
@@ -93,7 +93,7 @@ public class JobController {
         return ResponseEntity.noContent().build();
     }
 
-    // FR-R4: Change job status
+    //Change job status
     @PatchMapping("/{id}/status")
     @PreAuthorize("hasRole('RECRUITER')")
     public ResponseEntity<JobResponseDto> changeJobStatus(
@@ -104,7 +104,7 @@ public class JobController {
         return ResponseEntity.ok(job);
     }
 
-    // FR-R5: List recruiter's jobs
+    //List recruiter's jobs
     @GetMapping("/manage/all")
     @PreAuthorize("hasRole('RECRUITER')")
     public ResponseEntity<Page<JobResponseDto>> listRecruiterJobs(
