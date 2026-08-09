@@ -24,7 +24,7 @@ public class ApplicationController {
 
     // ==================== CANDIDATE ENDPOINTS ====================
 
-    // FR-U5 & FR-U6: Apply to a job
+    //Apply to a job
     @PostMapping
     public ResponseEntity<ApplicationSummaryResponseDto> applyToJob(@Valid @RequestBody ApplyRequestDto request) {
         Long candidateId = SecurityUtils.getCurrentUserId();
@@ -32,7 +32,7 @@ public class ApplicationController {
         return ResponseEntity.status(HttpStatus.CREATED).body(application);
     }
 
-    // FR-U7: Get own applications
+    //Get own applications
     @GetMapping("/me")
     public ResponseEntity<Page<ApplicationSummaryResponseDto>> getMyApplications(Pageable pageable) {
         Long candidateId = SecurityUtils.getCurrentUserId();
@@ -40,7 +40,7 @@ public class ApplicationController {
         return ResponseEntity.ok(applications);
     }
 
-    // FR-U7: Get single own application
+    //Get single own application
     @GetMapping("/me/{id}")
     public ResponseEntity<ApplicationSummaryResponseDto> getMyApplication(@PathVariable Long id) {
         Long candidateId = SecurityUtils.getCurrentUserId();
@@ -48,7 +48,7 @@ public class ApplicationController {
         return ResponseEntity.ok(application);
     }
 
-    // FR-U8: Withdraw own application
+    //Withdraw own application
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> withdrawApplication(@PathVariable Long id) {
         Long candidateId = SecurityUtils.getCurrentUserId();
@@ -58,7 +58,7 @@ public class ApplicationController {
 
     // ==================== RECRUITER ENDPOINTS ====================
 
-    // FR-R6: Get all applications for a job (with filtering/sorting)
+    //Get all applications for a job (with filtering/sorting)
     @GetMapping("/job/{jobId}")
     @PreAuthorize("hasRole('RECRUITER')")
     public ResponseEntity<Page<ApplicationDetailResponseDto>> getJobApplications(
@@ -76,7 +76,7 @@ public class ApplicationController {
         return ResponseEntity.ok(applications);
     }
 
-    // FR-R7: Get single application detail
+    //Get single application detail
     @GetMapping("/{id}")
     @PreAuthorize("hasRole('RECRUITER')")
     public ResponseEntity<ApplicationDetailResponseDto> getApplicationDetail(@PathVariable Long id) {
@@ -84,7 +84,7 @@ public class ApplicationController {
         return ResponseEntity.ok(application);
     }
 
-    // FR-R8: Rate application
+    //Rate application
     @PatchMapping("/{id}/rating")
     @PreAuthorize("hasRole('RECRUITER')")
     public ResponseEntity<ApplicationDetailResponseDto> rateApplication(
@@ -94,7 +94,7 @@ public class ApplicationController {
         return ResponseEntity.ok(application);
     }
 
-    // FR-R9: Add note to application
+    //Add note to application
     @PostMapping("/{id}/notes")
     @PreAuthorize("hasRole('RECRUITER')")
     public ResponseEntity<NoteResponseDto> addNote(
@@ -105,7 +105,7 @@ public class ApplicationController {
         return ResponseEntity.status(HttpStatus.CREATED).body(note);
     }
 
-    // FR-R10: Change application status
+    //Change application status
     @PatchMapping("/{id}/status")
     @PreAuthorize("hasRole('RECRUITER')")
     public ResponseEntity<ApplicationDetailResponseDto> changeStatus(

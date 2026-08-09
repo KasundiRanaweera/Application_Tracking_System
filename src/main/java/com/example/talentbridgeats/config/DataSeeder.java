@@ -27,7 +27,7 @@ public class DataSeeder implements CommandLineRunner {
             userRepository.save(recruiter);
             System.out.println("Seeded recruiter account: recruiter@talentbridge.com / Recruiter@123");
         }
-        // Add a second recruiter account
+
         if (userRepository.findByEmail("recruiter2@talentbridge.com").isEmpty()) {
             User recruiter2 = User.builder()
                     .name("Second Recruiter")
