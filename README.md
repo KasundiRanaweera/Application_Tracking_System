@@ -37,7 +37,7 @@ The same `Application` record returns **different JSON** depending on who asks.
 - **Candidates** receive `ApplicationSummaryResponseDto` — status, job title, applied date. No `rating` field. No `notes` field. Not filtered at runtime — those fields do not exist in the DTO at all.
 - **Recruiters** receive `ApplicationDetailResponseDto` — everything above plus rating, internal notes, candidate name, candidate email, resume URL, and cover note.
 
-Internal data cannot leak to candidates because it is absent from the candidate response shape entirely. This is a design decision, not a runtime filter.
+Internal data cannot leak to candidates because it is **absent from the candidate response shape entirely** — not filtered at runtime, structurally absent. This is a design decision, not a runtime check.
 
 ### 2. The hiring pipeline enforces rules, not free text
 
@@ -54,22 +54,28 @@ APPLIED → UNDER_REVIEW → SHORTLISTED → INTERVIEW → OFFER → HIRED
 → WITHDRAWN (owning candidate only)
 ```
 
-**Terminal states:** `HIRED`, `REJECTED`, `WITHDRAWN` — no further transitions allowed.
+**Terminal states:** `HIRED`, `REJECTED`, `WITHDRAWN` — no further transitions allowed from any of these.
 
 `PipelineValidator` also enforces **who** can make each move:
 - Only a `RECRUITER` can advance or reject an application
 - Only the `USER` (candidate) who owns an application can withdraw it
 - A recruiter attempting to withdraw is rejected with `403 Forbidden`
+- A candidate attempting to advance is rejected with `403 Forbidden`
 
-28 unit tests in `PipelineValidatorTest` cover every legal transition, every illegal jump, every terminal state, and every role violation.
+28 unit tests in `PipelineValidatorTest` cover every legal transition, every illegal skip,
+every terminal state, and every role violation — without requiring a Spring context to run.
 
 ### 3. Owner checks on every candidate-facing fetch
 
 A valid JWT proves **who someone is** — not which records they are allowed to access.
 
-Every service method that fetches an application on a candidate's behalf calls `findByIdAndCandidateId()`, which verifies the application belongs to the calling candidate before returning it. A candidate cannot read another candidate's application by guessing its ID — they receive `404 Not Found` as if the record does not exist.
+Every service method that fetches an application on a candidate's behalf calls
+`findByIdAndCandidateId()`, which combines the record lookup and the ownership check
+in a single database query. A candidate cannot read another candidate's application
+by guessing its ID — they receive `404 Not Found` as if the record does not exist,
+revealing nothing about whether the ID is valid.
 
-This pattern is applied consistently across:
+This pattern is applied consistently in:
 - `GET /api/applications/me/{id}` — view single own application
 - `DELETE /api/applications/{id}` — withdraw own application
 
@@ -101,7 +107,8 @@ spring.datasource.password=your_password
 ./mvnw spring-boot:run
 ```
 
-The app starts on port **8080**. On first boot, Hibernate creates the tables and the `DataSeeder` inserts the two recruiter accounts automatically.
+The app starts on port **8080**. On first boot, Hibernate creates all tables and
+`DataSeeder` inserts both recruiter accounts automatically. No manual schema setup needed.
 
 **4. Open Swagger UI**
 
@@ -110,12 +117,76 @@ The app starts on port **8080**. On first boot, Hibernate creates the tables and
 All endpoints are documented and testable directly from the browser.
 
 ### Authenticating in Swagger UI
+
 1. Expand `POST /api/auth/login` → click **Try it out**
-2. Enter recruiter or candidate credentials → click **Execute**
-3. Copy the `token` value from the response
+2. Enter recruiter credentials → click **Execute**
+3. Copy the `token` value from the response body
 4. Click **Authorize** (top right of the page)
 5. Enter `Bearer <your-token>` → click **Authorize**
-6. All protected endpoints now work from the browser
+6. All protected endpoints now work directly from the browser
+
+---
+
+## Testing with Postman
+
+A fully documented Postman collection is included in the `postman/` folder.
+
+### Import steps
+
+1. Open Postman → click **Import**
+2. Import `postman/TalentBridge_ATS.postman_collection.json`
+3. Import `postman/TalentBridge_ATS.postman_environment.json`
+4. Select the **TalentBridge ATS** environment from the top-right dropdown
+
+### How tokens work in the collection
+
+The collection uses **environment variables** and **auto-save scripts** — you never need
+to copy and paste tokens manually.
+
+- Run `POST /api/auth/login` (recruiter) → `{{recruiter_token}}` is saved automatically
+- Run `POST /api/auth/register` (candidate) → `{{candidate_token}}` is saved automatically
+- All subsequent requests read the token from the environment variable
+- Refreshing a login updates the variable — no requests break
+
+### Environment variables used
+
+| Variable | Set by | Used by |
+|---|---|---|
+| `base_url` | Manual (`http://localhost:8080`) | All requests |
+| `recruiter_token` | Recruiter login script | All recruiter endpoints |
+| `candidate_token` | Candidate register/login script | All candidate endpoints |
+| `recruiter_id` | Recruiter login script | Reference |
+| `candidate_id` | Candidate register/login script | Reference |
+| `job_id` | Create job script | Job and application requests |
+| `application_id` | Apply script | Application requests |
+
+### Documented endpoints in the collection
+
+The collection covers all 19 endpoints across 3 folders:
+
+**Auth**
+- `POST /api/auth/register` — register candidate
+- `POST /api/auth/login` — login (recruiter and candidate)
+
+**Jobs**
+- `GET /api/jobs` — list open jobs (with filters)
+- `GET /api/jobs/{id}` — view open job detail
+- `POST /api/jobs` — create job (recruiter)
+- `PUT /api/jobs/{id}` — update job (recruiter, DRAFT only)
+- `DELETE /api/jobs/{id}` — delete job (recruiter, DRAFT only)
+- `PATCH /api/jobs/{id}/status` — change job status (recruiter)
+- `GET /api/jobs/manage/all` — list all own jobs (recruiter)
+
+**Applications**
+- `POST /api/applications` — apply to job (candidate)
+- `GET /api/applications/me` — list own applications (candidate)
+- `GET /api/applications/me/{id}` — view own application (candidate)
+- `DELETE /api/applications/{id}` — withdraw application (candidate)
+- `GET /api/applications/job/{jobId}` — list job's applicants (recruiter)
+- `GET /api/applications/{id}` — view application detail (recruiter)
+- `PATCH /api/applications/{id}/rating` — rate application (recruiter)
+- `POST /api/applications/{id}/notes` — add internal note (recruiter)
+- `PATCH /api/applications/{id}/status` — change pipeline status (recruiter)
 
 ---
 
@@ -126,69 +197,73 @@ All endpoints are documented and testable directly from the browser.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/api/auth/register` | Public | Register a new candidate account |
-| POST | `/api/auth/login` | Public | Log in and receive a JWT token |
+| POST | `/api/auth/login` | Public | Log in and receive a JWT token (works for both roles) |
 
 ### Jobs — `/api/jobs`
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/jobs` | Any logged-in user | List all OPEN jobs. Supports filtering by `workMode`, `employmentType`, `location`; keyword `search` on title; sorting and pagination |
-| GET | `/api/jobs/{id}` | Any logged-in user | View full detail of a single OPEN job. Returns 404 if not OPEN |
-| POST | `/api/jobs` | RECRUITER | Create a new job (starts as DRAFT) |
-| PUT | `/api/jobs/{id}` | RECRUITER (owner only) | Update a job — only allowed when status is DRAFT |
-| DELETE | `/api/jobs/{id}` | RECRUITER (owner only) | Delete a job — only allowed when status is DRAFT |
-| PATCH | `/api/jobs/{id}/status` | RECRUITER (owner only) | Change job status: `DRAFT → OPEN → CLOSED` |
-| GET | `/api/jobs/manage/all` | RECRUITER | List all own jobs regardless of status, with optional keyword search and pagination |
+| GET | `/api/jobs` | Any logged-in user | List all OPEN jobs. Filter by `workMode`, `employmentType`, `location`; keyword `search` on title; supports sorting and pagination |
+| GET | `/api/jobs/{id}` | Any logged-in user | View full detail of a single OPEN job. Returns `404` if job is DRAFT or CLOSED |
+| POST | `/api/jobs` | RECRUITER | Create a new job posting. Starts as `DRAFT` |
+| PUT | `/api/jobs/{id}` | RECRUITER (owner only) | Update job fields. Only allowed when status is `DRAFT` |
+| DELETE | `/api/jobs/{id}` | RECRUITER (owner only) | Delete a job. Only allowed when status is `DRAFT` |
+| PATCH | `/api/jobs/{id}/status` | RECRUITER (owner only) | Change status: `DRAFT → OPEN → CLOSED` only. No backward moves |
+| GET | `/api/jobs/manage/all` | RECRUITER | List all own jobs regardless of status. Optional keyword `search` and pagination |
 
 ### Applications — `/api/applications`
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/api/applications` | USER | Apply to an open job. Includes optional `resumeUrl` and `coverNote`. Rejected with 409 if already applied to that job |
-| GET | `/api/applications/me` | USER | List own applications with current status. Paginated. No internal recruiter data |
-| GET | `/api/applications/me/{id}` | USER | View a single own application. Returns 404 if not owned by caller |
-| DELETE | `/api/applications/{id}` | USER | Withdraw own application. Validated through `PipelineValidator` |
-| GET | `/api/applications/job/{jobId}` | RECRUITER | List all applications for a job. Supports filtering by `status`, sorting by `rating` or `appliedAt`, and pagination |
-| GET | `/api/applications/{id}` | RECRUITER | View full application detail including candidate info, rating, and all internal notes |
-| PATCH | `/api/applications/{id}/rating` | RECRUITER | Assign or update a rating (1–5) on an application |
-| POST | `/api/applications/{id}/notes` | RECRUITER | Add a timestamped internal note. Append-only — notes are never shown to candidates |
-| PATCH | `/api/applications/{id}/status` | RECRUITER | Advance or reject an application. Validated by `PipelineValidator` — only legal transitions allowed |
+| POST | `/api/applications` | USER | Apply to an open job. Optional `resumeUrl` and `coverNote`. Returns `409` if already applied to that job |
+| GET | `/api/applications/me` | USER | List own applications with current status. Paginated. No rating or notes in response |
+| GET | `/api/applications/me/{id}` | USER | View a single own application. Returns `404` if not owned by caller |
+| DELETE | `/api/applications/{id}` | USER | Withdraw own application. Validated by `PipelineValidator` |
+| GET | `/api/applications/job/{jobId}` | RECRUITER | List all applications for a job. Filter by `status`, sort by `rating` or `appliedAt`, paginated |
+| GET | `/api/applications/{id}` | RECRUITER | View full application including candidate info, rating, and all internal notes |
+| PATCH | `/api/applications/{id}/rating` | RECRUITER | Assign or update a rating (1–5) |
+| POST | `/api/applications/{id}/notes` | RECRUITER | Add a timestamped internal note. Append-only. Never visible to candidates |
+| PATCH | `/api/applications/{id}/status` | RECRUITER | Advance or reject. All moves validated by `PipelineValidator` |
 
 ---
 
 ## Hiring Pipeline Reference
 
 ```
-                    ┌─────────┐
-                    │ APPLIED │
-                    └────┬────┘
-                         │ Recruiter
-                    ┌────▼──────────┐
-                    │ UNDER_REVIEW  │
-                    └────┬──────────┘
-                         │ Recruiter
-                    ┌────▼──────────┐
-                    │  SHORTLISTED  │
-                    └────┬──────────┘
-                         │ Recruiter
-                    ┌────▼──────────┐
-                    │   INTERVIEW   │
-                    └────┬──────────┘
-                         │ Recruiter
-                    ┌────▼──────────┐
-                    │    OFFER      │
-                    └────┬──────────┘
-                         │ Recruiter
-                    ┌────▼──────────┐
-                    │    HIRED      │ ← Terminal
-                    └───────────────┘
+              ┌──────────┐
+              │ APPLIED  │
+              └────┬─────┘
+                   │ Recruiter advances
+          ┌────────▼────────┐
+          │  UNDER_REVIEW   │
+          └────────┬────────┘
+                   │ Recruiter advances
+          ┌────────▼────────┐
+          │   SHORTLISTED   │
+          └────────┬────────┘
+                   │ Recruiter advances
+          ┌────────▼────────┐
+          │   INTERVIEW     │
+          └────────┬────────┘
+                   │ Recruiter advances
+          ┌────────▼────────┐
+          │     OFFER       │
+          └────────┬────────┘
+                   │ Recruiter advances
+          ┌────────▼────────┐
+          │     HIRED       │ ← Terminal (no further moves)
+          └─────────────────┘
 
-From any active stage:
-  → REJECTED  (recruiter only)  ← Terminal
-  → WITHDRAWN (candidate only)  ← Terminal
+  From any active stage:
+  → REJECTED  (recruiter only) ← Terminal
+  → WITHDRAWN (candidate only) ← Terminal
 ```
 
-Invalid transitions are rejected with `400 Bad Request`. Attempts by the wrong role are rejected with `403 Forbidden`.
+**Rules enforced by `PipelineValidator`:**
+- Skipping stages is rejected: `APPLIED → HIRED` returns `400 Bad Request`
+- Backward moves are rejected: `INTERVIEW → APPLIED` returns `400 Bad Request`
+- No moves out of terminal states: `HIRED → anything` returns `400 Bad Request`
+- Wrong role for a move: returns `403 Forbidden`
 
 ---
 
@@ -200,14 +275,14 @@ src/
 │   ├── TalentbridgeAtsApplication.java
 │   │
 │   ├── config/
-│   │   ├── DataSeeder.java            # Seeds recruiter accounts on startup
-│   │   ├── OpenApiConfig.java         # Swagger UI with JWT bearer auth
-│   │   └── SecurityConfig.java        # JWT filter chain, role-based access rules
+│   │   ├── DataSeeder.java              # Seeds two recruiter accounts on startup
+│   │   ├── OpenApiConfig.java           # Swagger UI with JWT bearer auth
+│   │   └── SecurityConfig.java          # JWT filter chain, role-based HTTP access rules
 │   │
 │   ├── controller/
-│   │   ├── AuthController.java        # /api/auth/register, /api/auth/login
-│   │   ├── JobController.java         # /api/jobs/** (candidate + recruiter)
-│   │   └── ApplicationController.java # /api/applications/** (candidate + recruiter)
+│   │   ├── AuthController.java          # /api/auth/**
+│   │   ├── JobController.java           # /api/jobs/**
+│   │   └── ApplicationController.java  # /api/applications/**
 │   │
 │   ├── dto/
 │   │   ├── AuthResponseDto.java
@@ -218,8 +293,8 @@ src/
 │   │   ├── JobStatusChangeRequestDto.java
 │   │   ├── JobResponseDto.java
 │   │   ├── ApplyRequestDto.java
-│   │   ├── ApplicationSummaryResponseDto.java   # Candidate view (no rating/notes)
-│   │   ├── ApplicationDetailResponseDto.java    # Recruiter view (full)
+│   │   ├── ApplicationSummaryResponseDto.java   # Candidate view — no rating or notes
+│   │   ├── ApplicationDetailResponseDto.java    # Recruiter view — full data
 │   │   ├── RatingRequestDto.java
 │   │   ├── NoteRequestDto.java
 │   │   ├── NoteResponseDto.java
@@ -234,24 +309,24 @@ src/
 │   │
 │   ├── model/
 │   │   ├── User.java
-│   │   ├── Role.java                  # USER, RECRUITER
+│   │   ├── Role.java                    # USER, RECRUITER
 │   │   ├── Job.java
-│   │   ├── JobStatus.java             # DRAFT, OPEN, CLOSED
-│   │   ├── WorkMode.java              # ONSITE, REMOTE, HYBRID
-│   │   ├── EmploymentType.java        # FULL_TIME, PART_TIME, CONTRACT, INTERNSHIP
+│   │   ├── JobStatus.java               # DRAFT, OPEN, CLOSED
+│   │   ├── WorkMode.java                # ONSITE, REMOTE, HYBRID
+│   │   ├── EmploymentType.java          # FULL_TIME, PART_TIME, CONTRACT, INTERNSHIP
 │   │   ├── Application.java
-│   │   ├── ApplicationStatus.java     # APPLIED → ... → HIRED / REJECTED / WITHDRAWN
+│   │   ├── ApplicationStatus.java       # APPLIED → ... → HIRED / REJECTED / WITHDRAWN
 │   │   └── ApplicationNote.java
 │   │
 │   ├── repository/
 │   │   ├── UserRepository.java
-│   │   ├── JobRepository.java         # JpaSpecificationExecutor for filtering
-│   │   ├── ApplicationRepository.java # JpaSpecificationExecutor + owner check queries
+│   │   ├── JobRepository.java           # JpaSpecificationExecutor for filtering
+│   │   ├── ApplicationRepository.java   # Owner-check queries + JpaSpecificationExecutor
 │   │   └── ApplicationNoteRepository.java
 │   │
 │   ├── security/
-│   │   ├── JwtService.java            # Generate and validate JWT tokens
-│   │   ├── JwtAuthFilter.java         # Intercepts every request, sets SecurityContext
+│   │   ├── JwtService.java              # Generate and validate JWT tokens
+│   │   ├── JwtAuthFilter.java           # Intercepts every request, sets SecurityContext
 │   │   ├── UserDetailsServiceImpl.java
 │   │   └── CustomAccessDeniedHandler.java
 │   │
@@ -259,41 +334,54 @@ src/
 │   │   ├── AuthService.java
 │   │   ├── JobService.java
 │   │   ├── ApplicationService.java
-│   │   └── PipelineValidator.java     # All pipeline transition rules live here
+│   │   └── PipelineValidator.java       # All pipeline transition rules in one place
 │   │
 │   └── util/
-│       └── SecurityUtils.java         # getCurrentUserId() from auth context
+│       └── SecurityUtils.java           # getCurrentUserId() from SecurityContext
 │
-└── test/java/com/example/talentbridgeats/
-    ├── TalentbridgeAtsApplicationTests.java
-    └── service/
-        └── PipelineValidatorTest.java  # 28 tests: legal, illegal, terminal, role rules
+├── test/java/com/example/talentbridgeats/
+│   ├── TalentbridgeAtsApplicationTests.java
+│   └── service/
+│       └── PipelineValidatorTest.java   # 28 unit tests — no Spring context needed
+│
+└── resources/
+    └── application.properties
+
+postman/
+├── TalentBridge_ATS.postman_collection.json    # All 19 endpoints with examples
+└── TalentBridge_ATS.postman_environment.json   # Environment variables + auto-token scripts
 ```
 
 ---
 
 ## Database Schema
 
-Four tables. `tbl_users` uses a `role` column as a discriminator — candidates and recruiters share the same table and authentication mechanism, differing only in their permissions.
+Four tables. `tbl_users` uses a `role` column as a discriminator — candidates and recruiters
+share the same table and authentication mechanism, differing only in permissions.
 
 ```
 tbl_users
-  id, name, email (unique), password (bcrypt), role (USER|RECRUITER), created_at
+  id, name, email (UNIQUE), password (bcrypt hash),
+  role (USER | RECRUITER), created_at
 
 tbl_jobs
-  id, title, description, location, work_mode, employment_type,
-  salary_min, salary_max, required_skills, status (DRAFT|OPEN|CLOSED),
-  closing_date, posted_by (FK→tbl_users), created_at, updated_at
+  id, title, description, location,
+  work_mode (ONSITE | REMOTE | HYBRID),
+  employment_type (FULL_TIME | PART_TIME | CONTRACT | INTERNSHIP),
+  salary_min, salary_max, required_skills,
+  status (DRAFT | OPEN | CLOSED),
+  closing_date, posted_by (FK → tbl_users), created_at, updated_at
 
 tbl_applications
-  id, job_id (FK→tbl_jobs), candidate_id (FK→tbl_users),
+  id, job_id (FK → tbl_jobs), candidate_id (FK → tbl_users),
   resume_url, cover_note,
-  status (APPLIED|UNDER_REVIEW|SHORTLISTED|INTERVIEW|OFFER|HIRED|REJECTED|WITHDRAWN),
+  status (APPLIED | UNDER_REVIEW | SHORTLISTED | INTERVIEW | OFFER | HIRED | REJECTED | WITHDRAWN),
   rating (1–5, nullable), applied_at, updated_at
-  UNIQUE (job_id, candidate_id)   ← prevents duplicate applications at DB level
+  UNIQUE (job_id, candidate_id)  ← prevents duplicate applications at DB level
 
 tbl_application_notes
-  id, application_id (FK→tbl_applications), recruiter_id (FK→tbl_users),
+  id, application_id (FK → tbl_applications),
+  recruiter_id (FK → tbl_users),
   content, created_at
 ```
 
@@ -310,6 +398,7 @@ tbl_application_notes
 | Database | MySQL 8 |
 | Validation | Jakarta Bean Validation |
 | API Docs | SpringDoc OpenAPI (Swagger UI) |
+| API Testing | Postman (collection included) |
 | Boilerplate | Lombok |
 | Build | Maven |
 
@@ -321,11 +410,15 @@ tbl_application_notes
 ./mvnw test
 ```
 
-`PipelineValidatorTest` runs without a Spring context (pure unit test — fast). It covers:
-- All 5 legal forward transitions (recruiter)
+`PipelineValidatorTest` runs as a pure unit test — no Spring context, no database, fast.
+
+It covers:
+- All 5 legal forward transitions (recruiter advancing candidate)
 - Rejection from all 5 active stages (recruiter)
 - Withdrawal from all 5 active stages (candidate)
-- Illegal skips (e.g. `APPLIED → HIRED`)
-- Backward moves (e.g. `INTERVIEW → APPLIED`)
-- All 3 terminal states (`HIRED`, `REJECTED`, `WITHDRAWN`)
-- Role violations (recruiter trying to withdraw, candidate trying to advance)
+- Illegal skips — e.g. `APPLIED → HIRED` directly
+- Backward moves — e.g. `INTERVIEW → APPLIED`
+- All 3 terminal states — `HIRED`, `REJECTED`, `WITHDRAWN`
+- Role violations — recruiter trying to withdraw, candidate trying to advance or reject
+
+---
