@@ -36,6 +36,9 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
+      - name: Give mvnw execute permission
+        run: chmod +x mvnw
+
       - name: Wait for MySQL to be ready
         run: |
           until mysqladmin ping -h 127.0.0.1 -u root -proot --silent; do
